@@ -208,39 +208,40 @@ extern "C" inline PyObject *pybind11_meta_call(PyObject *type, PyObject *args, P
 
 /// Cleanup the type-info for a pybind11-registered type.
 extern "C" inline void pybind11_meta_dealloc(PyObject *obj) {
-    auto *type = (PyTypeObject *) obj;
-    auto &internals = get_internals();
+    with_internals([obj](internals &internals) {
+        auto *type = (PyTypeObject *) obj;
 
-    // A pybind11-registered type will:
-    // 1) be found in internals.registered_types_py
-    // 2) have exactly one associated `detail::type_info`
-    auto found_type = internals.registered_types_py.find(type);
-    if (found_type != internals.registered_types_py.end() && found_type->second.size() == 1
-        && found_type->second[0]->type == type) {
+        // A pybind11-registered type will:
+        // 1) be found in internals.registered_types_py
+        // 2) have exactly one associated `detail::type_info`
+        auto found_type = internals.registered_types_py.find(type);
+        if (found_type != internals.registered_types_py.end() && found_type->second.size() == 1
+            && found_type->second[0]->type == type) {
 
-        auto *tinfo = found_type->second[0];
-        auto tindex = std::type_index(*tinfo->cpptype);
-        internals.direct_conversions.erase(tindex);
+            auto *tinfo = found_type->second[0];
+            auto tindex = std::type_index(*tinfo->cpptype);
+            internals.direct_conversions.erase(tindex);
 
-        if (tinfo->module_local) {
-            get_local_internals().registered_types_cpp.erase(tindex);
-        } else {
-            internals.registered_types_cpp.erase(tindex);
-        }
-        internals.registered_types_py.erase(tinfo->type);
-
-        // Actually just `std::erase_if`, but that's only available in C++20
-        auto &cache = internals.inactive_override_cache;
-        for (auto it = cache.begin(), last = cache.end(); it != last;) {
-            if (it->first == (PyObject *) tinfo->type) {
-                it = cache.erase(it);
+            if (tinfo->module_local) {
+                get_local_internals().registered_types_cpp.erase(tindex);
             } else {
-                ++it;
+                internals.registered_types_cpp.erase(tindex);
             }
-        }
+            internals.registered_types_py.erase(tinfo->type);
 
-        delete tinfo;
-    }
+            // Actually just `std::erase_if`, but that's only available in C++20
+            auto &cache = internals.inactive_override_cache;
+            for (auto it = cache.begin(), last = cache.end(); it != last;) {
+                if (it->first == (PyObject *) tinfo->type) {
+                    it = cache.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            delete tinfo;
+        }
+    });
 
     PyType_Type.tp_dealloc(obj);
 }
@@ -313,19 +314,20 @@ inline void traverse_offset_bases(void *valueptr,
 }
 
 inline bool register_instance_impl(void *ptr, instance *self) {
-    get_internals().registered_instances.emplace(ptr, self);
+    with_instance_map(ptr, [&](instance_map &instances) { instances.emplace(ptr, self); });
     return true; // unused, but gives the same signature as the deregister func
 }
 inline bool deregister_instance_impl(void *ptr, instance *self) {
-    auto &registered_instances = get_internals().registered_instances;
-    auto range = registered_instances.equal_range(ptr);
-    for (auto it = range.first; it != range.second; ++it) {
-        if (self == it->second) {
-            registered_instances.erase(it);
-            return true;
+    return with_instance_map(ptr, [&](instance_map &instances) {
+        auto range = instances.equal_range(ptr);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (self == it->second) {
+                instances.erase(it);
+                return true;
+            }
         }
-    }
-    return false;
+        return false;
+    });
 }
 
 inline void register_instance(instance *self, void *valptr, const type_info *tinfo) {
@@ -380,23 +382,27 @@ extern "C" inline int pybind11_object_init(PyObject *self, PyObject *, PyObject 
 }
 
 inline void add_patient(PyObject *nurse, PyObject *patient) {
-    auto &internals = get_internals();
     auto *instance = reinterpret_cast<detail::instance *>(nurse);
     instance->has_patients = true;
     Py_INCREF(patient);
-    internals.patients[nurse].push_back(patient);
+
+    with_internals([&](internals &internals) { internals.patients[nurse].push_back(patient); });
 }
 
 inline void clear_patients(PyObject *self) {
     auto *instance = reinterpret_cast<detail::instance *>(self);
-    auto &internals = get_internals();
-    auto pos = internals.patients.find(self);
-    assert(pos != internals.patients.end());
-    // Clearing the patients can cause more Python code to run, which
-    // can invalidate the iterator. Extract the vector of patients
-    // from the unordered_map first.
-    auto patients = std::move(pos->second);
-    internals.patients.erase(pos);
+    std::vector<PyObject *> patients;
+
+    with_internals([&](internals &internals) {
+        auto pos = internals.patients.find(self);
+        assert(pos != internals.patients.end());
+        // Clearing the patients can cause more Python code to run, which
+        // can invalidate the iterator. Extract the vector of patients
+        // from the unordered_map first.
+        patients = std::move(pos->second);
+        internals.patients.erase(pos);
+    });
+
     instance->has_patients = false;
     for (PyObject *&patient : patients) {
         Py_CLEAR(patient);
