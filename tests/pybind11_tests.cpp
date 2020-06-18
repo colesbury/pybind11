@@ -58,7 +58,7 @@ void bind_ConstructorStats(py::module_ &m) {
         // registered instances to allow instance cleanup checks (invokes a GC first)
         .def_static("detail_reg_inst", []() {
             ConstructorStats::gc();
-            return py::detail::get_internals().registered_instances.size();
+            return py::detail::num_registered_instances();
         });
 }
 
