@@ -360,23 +360,29 @@ extern "C" inline int pybind11_object_init(PyObject *self, PyObject *, PyObject 
 }
 
 inline void add_patient(PyObject *nurse, PyObject *patient) {
-    auto &internals = get_internals();
     auto instance = reinterpret_cast<detail::instance *>(nurse);
     instance->has_patients = true;
     Py_INCREF(patient);
-    internals.patients[nurse].push_back(patient);
+
+    with_internals([&](internals &internals) {
+        internals.patients[nurse].push_back(patient);
+    });
 }
 
 inline void clear_patients(PyObject *self) {
     auto instance = reinterpret_cast<detail::instance *>(self);
-    auto &internals = get_internals();
-    auto pos = internals.patients.find(self);
-    assert(pos != internals.patients.end());
-    // Clearing the patients can cause more Python code to run, which
-    // can invalidate the iterator. Extract the vector of patients
-    // from the unordered_map first.
-    auto patients = std::move(pos->second);
-    internals.patients.erase(pos);
+    std::vector<PyObject *> patients;
+
+    with_internals([&](internals &internals) {
+        auto pos = internals.patients.find(self);
+        assert(pos != internals.patients.end());
+        // Clearing the patients can cause more Python code to run, which
+        // can invalidate the iterator. Extract the vector of patients
+        // from the unordered_map first.
+        patients = std::move(pos->second);
+        internals.patients.erase(pos);
+    });
+
     instance->has_patients = false;
     for (PyObject *&patient : patients)
         Py_CLEAR(patient);

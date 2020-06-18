@@ -42,37 +42,36 @@ PYBIND11_NAMESPACE_BEGIN(detail)
 /// A life support system for temporary objects created by `type_caster::load()`.
 /// Adding a patient will keep it alive up until the enclosing function returns.
 class loader_life_support {
+private:
+    loader_life_support *prev;
+    PyObject *list_ptr;
+
 public:
     /// A new patient frame is created when a function is entered
-    loader_life_support() {
-        get_internals().loader_patient_stack.push_back(nullptr);
+    loader_life_support() : prev(nullptr), list_ptr(nullptr) {
+        auto tls = get_internals().cur_patients;
+        prev = static_cast<loader_life_support *>(PYBIND11_TLS_GET_VALUE(tls));
+        PYBIND11_TLS_REPLACE_VALUE(tls, this);
     }
 
     /// ... and destroyed after it returns
     ~loader_life_support() {
-        auto &stack = get_internals().loader_patient_stack;
-        if (stack.empty())
-            pybind11_fail("loader_life_support: internal error");
-
-        auto ptr = stack.back();
-        stack.pop_back();
-        Py_CLEAR(ptr);
-
-        // A heuristic to reduce the stack's capacity (e.g. after long recursive calls)
-        if (stack.capacity() > 16 && !stack.empty() && stack.capacity() / stack.size() > 2)
-            stack.shrink_to_fit();
+        auto tls = get_internals().cur_patients;
+        PYBIND11_TLS_REPLACE_VALUE(tls, prev);
+        Py_CLEAR(list_ptr);
     }
 
     /// This can only be used inside a pybind11-bound function, either by `argument_loader`
     /// at argument preparation time or by `py::cast()` at execution time.
     PYBIND11_NOINLINE static void add_patient(handle h) {
-        auto &stack = get_internals().loader_patient_stack;
-        if (stack.empty())
+        auto tls = get_internals().cur_patients;
+        auto current_ptr = static_cast<loader_life_support *>(PYBIND11_TLS_GET_VALUE(tls));
+        if (!current_ptr)
             throw cast_error("When called outside a bound function, py::cast() cannot "
                              "do Python -> C++ conversions which require the creation "
                              "of temporary values");
 
-        auto &list_ptr = stack.back();
+        auto &list_ptr = current_ptr->list_ptr;
         if (list_ptr == nullptr) {
             list_ptr = PyList_New(1);
             if (!list_ptr)

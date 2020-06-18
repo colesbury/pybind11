@@ -10,6 +10,7 @@
 #pragma once
 
 #include "../pytypes.h"
+#include <mutex>
 
 PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 PYBIND11_NAMESPACE_BEGIN(detail)
@@ -94,6 +95,7 @@ struct override_hash {
 /// Whenever binary incompatible changes are made to this structure,
 /// `PYBIND11_INTERNALS_VERSION` must be incremented.
 struct internals {
+    std::mutex mutex;
     type_map<type_info *> registered_types_cpp; // std::type_index -> pybind11's type information
     std::unordered_map<PyTypeObject *, std::vector<type_info *>> registered_types_py; // PyTypeObject* -> base type_info(s)
     std::unordered_multimap<const void *, instance*> registered_instances; // void * -> instance*
@@ -102,7 +104,7 @@ struct internals {
     std::unordered_map<const PyObject *, std::vector<PyObject *>> patients;
     std::forward_list<void (*) (std::exception_ptr)> registered_exception_translators;
     std::unordered_map<std::string, void *> shared_data; // Custom data to be shared across extensions
-    std::vector<PyObject *> loader_patient_stack; // Used by `loader_life_support`
+    PYBIND11_TLS_KEY_INIT(cur_patients);
     std::forward_list<std::string> static_strings; // Stores the std::strings backing detail::c_str()
     PyTypeObject *static_property_type;
     PyTypeObject *default_metaclass;
@@ -119,6 +121,7 @@ struct internals {
         // of those have anything to do with CPython internals.
         // PyMem_RawFree *requires* that the `tstate` be allocated with the CPython allocator.
         PYBIND11_TLS_FREE(tstate);
+        PYBIND11_TLS_FREE(cur_patients);
     }
 #endif
 };
@@ -294,11 +297,21 @@ PYBIND11_NOINLINE inline internals &get_internals() {
             if (!internals_ptr->tstate || PyThread_tss_create(internals_ptr->tstate))
                 pybind11_fail("get_internals: could not successfully initialize the TSS key!");
             PyThread_tss_set(internals_ptr->tstate, tstate);
+
+            internals_ptr->cur_patients = PyThread_tss_alloc();
+            if (!internals_ptr->cur_patients || PyThread_tss_create(internals_ptr->cur_patients))
+                pybind11_fail("get_internals: could not successfully initialize the patient TSS key!");
+            PyThread_tss_set(internals_ptr->cur_patients, nullptr);
         #else
             internals_ptr->tstate = PyThread_create_key();
             if (internals_ptr->tstate == -1)
                 pybind11_fail("get_internals: could not successfully initialize the TLS key!");
             PyThread_set_key_value(internals_ptr->tstate, tstate);
+
+            internals_ptr->cur_patients = PyThread_create_key();
+            if (internals_ptr->cur_patients == -1)
+                pybind11_fail("get_internals: could not successfully initialize the patient TSS key!");
+            PyThread_set_key_value(internals_ptr->cur_patients, nullptr);
         #endif
         internals_ptr->istate = tstate->interp;
 #endif
@@ -309,6 +322,13 @@ PYBIND11_NOINLINE inline internals &get_internals() {
         internals_ptr->instance_base = make_object_base_type(internals_ptr->default_metaclass);
     }
     return **internals_pp;
+}
+
+template <typename F>
+inline void with_internals(const F& cb) {
+    auto &internals = get_internals();
+    std::unique_lock<std::mutex> lock(internals.mutex);
+    cb(internals);
 }
 
 /// Works like `internals.registered_types_cpp`, but for module-local registered types:
