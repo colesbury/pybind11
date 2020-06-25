@@ -2022,7 +2022,7 @@ PYBIND11_NAMESPACE_BEGIN(detail)
 // register_exception approach below.  (It would be simpler to have the static local variable
 // directly in register_exception, but that makes clang <3.5 segfault - issue #1349).
 template <typename CppException>
-exception<CppException> &get_exception_object() { static exception<CppException> ex; return ex; }
+exception<CppException> &get_exception_object() { static exception<CppException> *ex = new exception<CppException>(); return *ex; }
 PYBIND11_NAMESPACE_END(detail)
 
 /**

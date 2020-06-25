@@ -348,7 +348,7 @@ def test_cyclic_gc():
 def test_bad_arg_default(msg):
     from pybind11_tests import debug_enabled
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(TypeError) as excinfo:
         m.bad_arg_def_named()
     assert msg(excinfo.value) == (
         "arg(): could not convert default argument 'a: UnregisteredType' in function "
@@ -358,7 +358,7 @@ def test_bad_arg_default(msg):
         "yet?). Compile in debug mode for more information."
     )
 
-    with pytest.raises(RuntimeError) as excinfo:
+    with pytest.raises(TypeError) as excinfo:
         m.bad_arg_def_unnamed()
     assert msg(excinfo.value) == (
         "arg(): could not convert default argument 'UnregisteredType' in function "

@@ -750,7 +750,7 @@ public:
         detail::clean_type_id(tname);
         std::string msg = "Unregistered type : " + tname;
         PyErr_SetString(PyExc_TypeError, msg.c_str());
-        return {nullptr, nullptr};
+        throw error_already_set();
     }
 
     const type_info *typeinfo = nullptr;
