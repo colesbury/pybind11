@@ -454,7 +454,9 @@ PYBIND11_NOINLINE inline std::string error_string() {
 }
 
 PYBIND11_NOINLINE inline handle get_object_handle(const void *ptr, const detail::type_info *type ) {
-    auto &instances = get_internals().registered_instances;
+    auto &internals = get_internals();
+    std::unique_lock<std::mutex> lock(internals.mutex);
+    auto &instances = internals.registered_instances;
     auto range = instances.equal_range(ptr);
     for (auto it = range.first; it != range.second; ++it) {
         for (auto vh : values_and_holders(it->second)) {
@@ -507,11 +509,15 @@ public:
         if (src == nullptr)
             return none().release();
 
-        auto it_instances = get_internals().registered_instances.equal_range(src);
-        for (auto it_i = it_instances.first; it_i != it_instances.second; ++it_i) {
-            for (auto instance_type : detail::all_type_info(Py_TYPE(it_i->second))) {
-                if (instance_type && same_type(*instance_type->cpptype, *tinfo->cpptype))
-                    return handle((PyObject *) it_i->second).inc_ref();
+        {
+            auto &internals = get_internals();
+            std::unique_lock<std::mutex> lock(internals.mutex);
+            auto it_instances = internals.registered_instances.equal_range(src);
+            for (auto it_i = it_instances.first; it_i != it_instances.second; ++it_i) {
+                for (auto instance_type : detail::all_type_info(Py_TYPE(it_i->second))) {
+                    if (instance_type && same_type(*instance_type->cpptype, *tinfo->cpptype))
+                        return handle((PyObject *) it_i->second).inc_ref();
+                }
             }
         }
 
