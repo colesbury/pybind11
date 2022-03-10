@@ -295,19 +295,25 @@ inline void traverse_offset_bases(void *valueptr, const detail::type_info *tinfo
 }
 
 inline bool register_instance_impl(void *ptr, instance *self) {
-    get_internals().registered_instances.emplace(ptr, self);
+    with_internals([&](internals &internals) {
+        internals.registered_instances.emplace(ptr, self);
+    });
     return true; // unused, but gives the same signature as the deregister func
 }
 inline bool deregister_instance_impl(void *ptr, instance *self) {
-    auto &registered_instances = get_internals().registered_instances;
-    auto range = registered_instances.equal_range(ptr);
-    for (auto it = range.first; it != range.second; ++it) {
-        if (self == it->second) {
-            registered_instances.erase(it);
-            return true;
+    bool ret = false;
+    with_internals([&](internals &internals) {
+        auto &registered_instances = internals.registered_instances;
+        auto range = registered_instances.equal_range(ptr);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (self == it->second) {
+                registered_instances.erase(it);
+                ret = true;
+                return;
+            }
         }
-    }
-    return false;
+    });
+    return ret;
 }
 
 inline void register_instance(instance *self, void *valptr, const type_info *tinfo) {
