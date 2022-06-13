@@ -325,10 +325,10 @@ PYBIND11_NOINLINE inline internals &get_internals() {
 }
 
 template <typename F>
-inline void with_internals(const F& cb) {
+inline auto with_internals(const F& cb) {
     auto &internals = get_internals();
     std::unique_lock<std::mutex> lock(internals.mutex);
-    cb(internals);
+    return cb(internals);
 }
 
 /// Works like `internals.registered_types_cpp`, but for module-local registered types:
@@ -343,9 +343,11 @@ inline type_map<type_info *> &registered_local_types_cpp() {
 /// suitable for c-style strings needed by Python internals (such as PyTypeObject's tp_name).
 template <typename... Args>
 const char *c_str(Args &&...args) {
-    auto &strings = get_internals().static_strings;
-    strings.emplace_front(std::forward<Args>(args)...);
-    return strings.front().c_str();
+    return with_internals([&](internals &internals) {
+        auto &strings = internals.static_strings;
+        strings.emplace_front(std::forward<Args>(args)...);
+        return strings.front().c_str();
+    });
 }
 
 PYBIND11_NAMESPACE_END(detail)
@@ -354,15 +356,18 @@ PYBIND11_NAMESPACE_END(detail)
 /// pybind11 version) running in the current interpreter. Names starting with underscores
 /// are reserved for internal usage. Returns `nullptr` if no matching entry was found.
 inline PYBIND11_NOINLINE void *get_shared_data(const std::string &name) {
-    auto &internals = detail::get_internals();
-    auto it = internals.shared_data.find(name);
-    return it != internals.shared_data.end() ? it->second : nullptr;
+    return detail::with_internals([&](detail::internals &internals) {
+        auto it = internals.shared_data.find(name);
+        return it != internals.shared_data.end() ? it->second : nullptr;
+    });
 }
 
 /// Set the shared data that can be later recovered by `get_shared_data()`.
 inline PYBIND11_NOINLINE void *set_shared_data(const std::string &name, void *data) {
-    detail::get_internals().shared_data[name] = data;
-    return data;
+    return detail::with_internals([&](detail::internals &internals) {
+        internals.shared_data[name] = data;
+        return data;
+    });
 }
 
 /// Returns a typed reference to a shared data entry (by using `get_shared_data()`) if
@@ -370,14 +375,15 @@ inline PYBIND11_NOINLINE void *set_shared_data(const std::string &name, void *da
 /// added to the shared data under the given name and a reference to it is returned.
 template<typename T>
 T &get_or_create_shared_data(const std::string &name) {
-    auto &internals = detail::get_internals();
-    auto it = internals.shared_data.find(name);
-    T *ptr = (T *) (it != internals.shared_data.end() ? it->second : nullptr);
-    if (!ptr) {
-        ptr = new T();
-        internals.shared_data[name] = ptr;
-    }
-    return *ptr;
+    return detail::with_internals([&](detail::internals &internals) {
+        auto it = internals.shared_data.find(name);
+        T *ptr = (T *) (it != internals.shared_data.end() ? it->second : nullptr);
+        if (!ptr) {
+            ptr = new T();
+            internals.shared_data[name] = ptr;
+        }
+        return *ptr;
+    });
 }
 
 PYBIND11_NAMESPACE_END(PYBIND11_NAMESPACE)
