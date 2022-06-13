@@ -375,14 +375,14 @@ inline PYBIND11_NOINLINE void *set_shared_data(const std::string &name, void *da
 /// added to the shared data under the given name and a reference to it is returned.
 template<typename T>
 T &get_or_create_shared_data(const std::string &name) {
-    return detail::with_internals([&](detail::internals &internals) {
+    return *detail::with_internals([&](detail::internals &internals) {
         auto it = internals.shared_data.find(name);
         T *ptr = (T *) (it != internals.shared_data.end() ? it->second : nullptr);
         if (!ptr) {
             ptr = new T();
             internals.shared_data[name] = ptr;
         }
-        return *ptr;
+        return ptr;
     });
 }
 
