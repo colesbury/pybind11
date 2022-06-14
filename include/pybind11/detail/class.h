@@ -295,18 +295,17 @@ inline void traverse_offset_bases(void *valueptr, const detail::type_info *tinfo
 }
 
 inline bool register_instance_impl(void *ptr, instance *self) {
-    with_internals([&](internals &internals) {
-        internals.registered_instances.emplace(ptr, self);
+    with_instance_map(ptr, [&](instance_map &instances) {
+        instances.emplace(ptr, self);
     });
     return true; // unused, but gives the same signature as the deregister func
 }
 inline bool deregister_instance_impl(void *ptr, instance *self) {
-    return with_internals([&](internals &internals) {
-        auto &registered_instances = internals.registered_instances;
-        auto range = registered_instances.equal_range(ptr);
+    return with_instance_map(ptr, [&](instance_map &instances) {
+        auto range = instances.equal_range(ptr);
         for (auto it = range.first; it != range.second; ++it) {
             if (self == it->second) {
-                registered_instances.erase(it);
+                instances.erase(it);
                 return true;
             }
         }

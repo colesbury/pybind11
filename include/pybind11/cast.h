@@ -454,8 +454,7 @@ PYBIND11_NOINLINE inline std::string error_string() {
 }
 
 PYBIND11_NOINLINE inline handle get_object_handle(const void *ptr, const detail::type_info *type ) {
-    return with_internals([&](internals &internals) {
-        auto &instances = internals.registered_instances;
+    return with_instance_map(ptr, [&](instance_map &instances) {
         auto range = instances.equal_range(ptr);
         for (auto it = range.first; it != range.second; ++it) {
             for (const auto &vh : values_and_holders(it->second)) {
@@ -509,8 +508,9 @@ public:
         if (src == nullptr)
             return none().release();
 
-        handle h = with_internals([&](internals &internals) {
-            auto it_instances = internals.registered_instances.equal_range(src);
+
+        handle h = with_instance_map(src, [&](instance_map &instances) {
+            auto it_instances = instances.equal_range(src);
             for (auto it_i = it_instances.first; it_i != it_instances.second; ++it_i) {
                 for (auto instance_type : detail::all_type_info(Py_TYPE(it_i->second))) {
                     if (instance_type && same_type(*instance_type->cpptype, *tinfo->cpptype)) {

@@ -11,6 +11,7 @@
 
 #include "../pytypes.h"
 #include <mutex>
+#include <thread>
 
 PYBIND11_NAMESPACE_BEGIN(PYBIND11_NAMESPACE)
 PYBIND11_NAMESPACE_BEGIN(detail)
@@ -91,6 +92,16 @@ struct override_hash {
     }
 };
 
+using instance_map = std::unordered_multimap<const void *, instance*>;
+
+#define PYBIND11_INSTANCE_SHARD_BITS 7
+#define PYBIND11_INSTANCE_SHARDS (1 << PYBIND11_INSTANCE_SHARD_BITS)
+
+struct alignas(64) instance_map_shard {
+    std::mutex mutex;
+    instance_map registered_instances;
+};
+
 /// Internal data structure used to track registered instances and types.
 /// Whenever binary incompatible changes are made to this structure,
 /// `PYBIND11_INTERNALS_VERSION` must be incremented.
@@ -98,7 +109,8 @@ struct internals {
     std::mutex mutex;
     type_map<type_info *> registered_types_cpp; // std::type_index -> pybind11's type information
     std::unordered_map<PyTypeObject *, std::vector<type_info *>> registered_types_py; // PyTypeObject* -> base type_info(s)
-    std::unordered_multimap<const void *, instance*> registered_instances; // void * -> instance*
+    std::unique_ptr<instance_map_shard[]> instance_shards;  // void * -> instance*
+    size_t num_instance_shards;
     std::unordered_set<std::pair<const PyObject *, const char *>, override_hash> inactive_override_cache;
     type_map<std::vector<bool (*)(PyObject *, void *&)>> direct_conversions;
     std::unordered_map<const PyObject *, std::vector<PyObject *>> patients;
@@ -320,6 +332,9 @@ PYBIND11_NOINLINE inline internals &get_internals() {
         internals_ptr->static_property_type = make_static_property_type();
         internals_ptr->default_metaclass = make_default_metaclass();
         internals_ptr->instance_base = make_object_base_type(internals_ptr->default_metaclass);
+        size_t num_shards = 2 * std::thread::hardware_concurrency();
+        internals_ptr->instance_shards.reset(new instance_map_shard[num_shards]);
+        internals_ptr->num_instance_shards = num_shards;
     }
     return **internals_pp;
 }
@@ -329,6 +344,30 @@ inline auto with_internals(const F& cb) {
     auto &internals = get_internals();
     std::unique_lock<std::mutex> lock(internals.mutex);
     return cb(internals);
+}
+
+inline uint64_t splitmix64(uint64_t z) {
+	z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
+	z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
+	return z ^ (z >> 31);
+}
+
+template <typename F>
+inline auto with_instance_map(const void *ptr, const F& cb) {
+    auto &internals = get_internals();
+
+    // Hash address to compute shard, but ignore low bits. We'd like allocations
+    // from the same thread/core to map to the same shard and allocations from
+    // other threads/cores to map to other shards. Using the high bits is a good
+    // heuristic because parallel memory allocators often have a per-thread
+    // arena/superblock/segment from which smaller allocations are served.
+    uintptr_t addr = (uintptr_t)ptr;
+    uintptr_t hash = splitmix64((uint64_t)(addr >> 20));
+    int bits = hash % internals.num_instance_shards;
+
+    auto &shard = internals.instance_shards[bits];
+    std::unique_lock<std::mutex> lock(shard.mutex);
+    return cb(shard.registered_instances);
 }
 
 /// Works like `internals.registered_types_cpp`, but for module-local registered types:
