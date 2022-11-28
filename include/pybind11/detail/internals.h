@@ -340,7 +340,7 @@ PYBIND11_NOINLINE inline internals &get_internals() {
 }
 
 template <typename F>
-inline auto with_internals(const F& cb) {
+inline auto with_internals(const F& cb) -> decltype(cb(get_internals())) {
     auto &internals = get_internals();
     std::unique_lock<std::mutex> lock(internals.mutex);
     return cb(internals);
@@ -353,7 +353,7 @@ inline uint64_t splitmix64(uint64_t z) {
 }
 
 template <typename F>
-inline auto with_instance_map(const void *ptr, const F& cb) {
+inline auto with_instance_map(const void *ptr, const F& cb) -> decltype(cb(get_internals().instance_shards[0].registered_instances)) {
     auto &internals = get_internals();
 
     // Hash address to compute shard, but ignore low bits. We'd like allocations
