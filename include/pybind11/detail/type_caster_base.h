@@ -205,7 +205,7 @@ PYBIND11_NOINLINE detail::type_info *get_type_info(PyTypeObject *type) {
     return bases.front();
 }
 
-inline detail::type_info *get_local_type_info(const std::type_index &tp) {
+inline detail::type_info *get_local_type_info_lock_held(const std::type_index &tp) {
     auto &locals = get_local_internals().registered_types_cpp;
     auto it = locals.find(tp);
     if (it != locals.end()) {
@@ -214,26 +214,35 @@ inline detail::type_info *get_local_type_info(const std::type_index &tp) {
     return nullptr;
 }
 
+inline detail::type_info *get_local_type_info(const std::type_index &tp) {
+    // NB: internals and local_internals share a single mutex
+    PYBIND11_LOCK_INTERNALS(get_internals());
+    return get_local_type_info_lock_held(tp);
+}
+
+inline detail::type_info *get_global_type_info_lock_held(const std::type_index &tp) {
+    auto &types = get_internals().registered_types_cpp;
+    auto it = types.find(tp);
+    if (it != types.end()) {
+        return it->second;
+    }
+    return nullptr;
+}
+
 inline detail::type_info *get_global_type_info(const std::type_index &tp) {
-    return with_internals([&](internals &internals) {
-        detail::type_info *type_info = nullptr;
-        auto &types = internals.registered_types_cpp;
-        auto it = types.find(tp);
-        if (it != types.end()) {
-            type_info = it->second;
-        }
-        return type_info;
-    });
+    PYBIND11_LOCK_INTERNALS(get_internals());
+    return get_global_type_info_lock_held(tp);
 }
 
 /// Return the type info for a given C++ type; on lookup failure can either throw or return
 /// nullptr.
 PYBIND11_NOINLINE detail::type_info *get_type_info(const std::type_index &tp,
                                                    bool throw_if_missing = false) {
-    if (auto *ltype = get_local_type_info(tp)) {
+    PYBIND11_LOCK_INTERNALS(get_internals());
+    if (auto *ltype = get_local_type_info_lock_held(tp)) {
         return ltype;
     }
-    if (auto *gtype = get_global_type_info(tp)) {
+    if (auto *gtype = get_global_type_info_lock_held(tp)) {
         return gtype;
     }
 
